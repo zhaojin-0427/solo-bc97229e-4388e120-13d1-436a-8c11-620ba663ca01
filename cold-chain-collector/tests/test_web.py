@@ -13,7 +13,7 @@ from app.web import create_app
 
 class WebApiTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.cfg = make_config(self.tmp.name, autostart=False)
         self.app, self.collector = create_app(self.cfg)
         self.client = self.app.test_client()

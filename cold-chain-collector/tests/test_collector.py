@@ -29,6 +29,7 @@ def make_config(root: str, **overrides) -> Config:
         max_line_bytes=4096,
         batch_size=50,
         autostart=False,
+        backfill_autostart=False,
         http_host="127.0.0.1",
         http_port=8000,
     )
@@ -115,7 +116,7 @@ class ValidatorTests(unittest.TestCase):
 
 class CollectorTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = self.tmp.name
         self.cfg = make_config(self.root)
         init_db(self.cfg.db_path)

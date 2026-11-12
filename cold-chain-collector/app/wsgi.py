@@ -15,6 +15,8 @@ log = logging.getLogger("cold-chain")
 
 config = Config()
 app, collector = create_app(config)
+backfill = app.config["GAP_BACKFILL"]
+atexit.register(backfill.stop)
 atexit.register(collector.stop)
 
 

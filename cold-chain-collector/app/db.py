@@ -53,6 +53,53 @@ CREATE TABLE IF NOT EXISTS ingest_errors (
 
 CREATE INDEX IF NOT EXISTS idx_errors_file
     ON ingest_errors (source_dev, source_ino, line_no);
+
+-- A sample point is a distinct (waybill, ts_utc) pair: several raw rows that
+-- share the same UTC timestamp count as one point while every raw reading is
+-- still kept separately above. The view makes that definition explicit without
+-- any extra write path to keep consistent.
+CREATE VIEW IF NOT EXISTS samples AS
+    SELECT DISTINCT waybill, ts_utc FROM readings;
+
+-- Adjacent sample points (per waybill) more than GAP_THRESHOLD_SECONDS apart.
+-- Identity is the full (waybill, start_ts, end_ts) tuple, so a split gap gets
+-- brand-new rows while unchanged gaps keep both their row and their mark.
+CREATE TABLE IF NOT EXISTS gaps (
+    waybill    TEXT    NOT NULL,
+    start_ts   TEXT    NOT NULL,
+    end_ts     TEXT    NOT NULL,
+    duration_s REAL    NOT NULL,
+    PRIMARY KEY (waybill, start_ts, end_ts)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_gaps_waybill
+    ON gaps (waybill, start_ts);
+
+-- Review marks. Rows are deliberately retained even when their gap is later
+-- split or eliminated (audit trail); they simply stop joining to `gaps`,
+-- which is exactly the "old mark becomes invalid" behaviour.
+CREATE TABLE IF NOT EXISTS gap_marks (
+    waybill   TEXT NOT NULL,
+    start_ts  TEXT NOT NULL,
+    end_ts    TEXT NOT NULL,
+    note      TEXT,
+    marked_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (waybill, start_ts, end_ts)
+) WITHOUT ROWID;
+
+-- Single-row state machine for the one-off historical backfill:
+-- pending -> running -> ready. Survives restarts; a crash mid-run simply makes
+-- the next process resume (rebuilds are idempotent).
+CREATE TABLE IF NOT EXISTS gap_jobs (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    status          TEXT    NOT NULL DEFAULT 'pending',
+    total_waybills  INTEGER NOT NULL DEFAULT 0,
+    done_waybills   INTEGER NOT NULL DEFAULT 0,
+    current_waybill TEXT,
+    started_at      TEXT,
+    finished_at     TEXT,
+    updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 """
 
 

@@ -62,10 +62,13 @@ class Gateway:
         self.rotate_every = args.rotate_every
         self.half_line_every = args.half_line_every
         self.bad_every = args.bad_every
+        self.outage_every = args.outage_every
+        self.outage_seconds = args.outage_seconds
         self.waybills = [f"WB-{1001 + i}" for i in range(args.waybills)]
         self.rng = random.Random(args.seed)
         self.lines_in_file = 0
         self.total_lines = 0
+        self.good_lines = 0
         self.rotation_seq = 0
         self.fd = -1
         os.makedirs(self.dir, exist_ok=True)
@@ -125,6 +128,26 @@ class Gateway:
         )
 
     # -------------------------------------------------------------------- tick
+    def _maybe_outage(self) -> None:
+        """Simulate a gateway blackout: write nothing for a while.
+
+        The first good line after the silence is naturally far from the last
+        emitted timestamp, which is exactly the missing-sample gap the audit
+        page is built to surface.
+        """
+        if not self.outage_every or not self.outage_seconds:
+            return
+        if self.good_lines and self.good_lines % self.outage_every != 0:
+            return
+        print(
+            f"[gateway] simulated outage: silent for {self.outage_seconds}s "
+            f"after {self.good_lines} good lines",
+            flush=True,
+        )
+        deadline = time.monotonic() + self.outage_seconds
+        while not STOP and time.monotonic() < deadline:
+            time.sleep(min(0.2, deadline - time.monotonic()))
+
     def tick(self) -> None:
         if self.rotate_every and self.lines_in_file >= self.rotate_every:
             self._rotate()
@@ -148,6 +171,8 @@ class Gateway:
         else:
             self._write(line + "\n")
         self.lines_in_file += 1
+        self.good_lines += 1
+        self._maybe_outage()
 
     def run(self) -> None:
         signal.signal(signal.SIGTERM, _handle_signal)
@@ -156,7 +181,8 @@ class Gateway:
         print(
             f"[gateway] appending to {self.active_path} every {self.interval}s "
             f"(rotate={self.rotate_every}, half-line={self.half_line_every}, "
-            f"bad={self.bad_every})",
+            f"bad={self.bad_every}, outage={self.outage_every}/"
+            f"{self.outage_seconds}s)",
             flush=True,
         )
         try:
@@ -187,6 +213,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--bad-every", type=int,
                    default=env_int("BAD_LINE_EVERY", 11),
                    help="emit one complete malformed line every N lines (0 off)")
+    p.add_argument("--outage-every", type=int,
+                   default=env_int("OUTAGE_EVERY", 0),
+                   help="go silent for --outage-seconds every N good lines "
+                        "(0 disables)")
+    p.add_argument("--outage-seconds", type=float,
+                   default=env_float("OUTAGE_SECONDS", 420),
+                   help="duration of each simulated gateway outage in seconds")
     p.add_argument("--waybills", type=int, default=env_int("WAYBILLS", 4))
     p.add_argument("--seed", type=int, default=env_int("SEED", 20261112))
     return p.parse_args(argv)

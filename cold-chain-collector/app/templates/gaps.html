@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>缺测核查 · 冷链温度日志采集台</title>
+<style>
+  :root { --bg:#0f1720; --card:#18232f; --line:#273747; --fg:#e6edf3;
+          --muted:#8ba0b4; --accent:#38bdf8; --ok:#34d399; --warn:#fbbf24;
+          --err:#f87171; --purple:#a78bfa; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",
+         "PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:18px 28px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; }
+  nav a { color:var(--accent); text-decoration:none; margin-right:14px; font-size:13px; }
+  nav a:hover { text-decoration:underline; }
+  main { padding:22px 28px; max-width:1200px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px;
+            padding:18px; margin-bottom:18px; }
+  section h2 { font-size:15px; margin:0 0 12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line);
+          vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .muted { color:var(--muted); }
+  .tag { font-size:11px; padding:2px 8px; border-radius:999px; }
+  .tag.marked   { background:rgba(167,139,250,.18); color:var(--purple); }
+  .tag.open     { background:rgba(248,113,113,.15); color:var(--err); }
+  .tag.building { background:rgba(251,191,36,.18); color:var(--warn); }
+  .tag.ready    { background:rgba(52,211,153,.18); color:var(--ok); }
+  button { background:var(--accent); color:#06283d; border:0; border-radius:8px;
+           padding:6px 14px; font-weight:600; cursor:pointer; font-size:12px; }
+  button.secondary { background:var(--line); color:var(--fg); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .progress-wrap { background:#0c141d; border:1px solid var(--line); border-radius:8px;
+                   height:14px; overflow:hidden; margin-top:10px; }
+  .progress-bar { height:100%; background:linear-gradient(90deg,#38bdf8,#34d399);
+                  width:0%; transition:width .4s; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .banner { border-radius:10px; padding:14px 16px; margin-bottom:18px; }
+  .banner.build { background:rgba(251,191,36,.1); border:1px solid rgba(251,191,36,.4); }
+  .banner.err   { background:rgba(248,113,113,.1); border:1px solid rgba(248,113,113,.4); }
+  code { background:#0c141d; padding:1px 6px; border-radius:6px; }
+  .clickable { cursor:pointer; color:var(--accent); }
+  .clickable:hover { text-decoration:underline; }
+  .note-input { background:#0c141d; border:1px solid var(--line); color:var(--fg);
+                border-radius:6px; padding:4px 8px; font-size:12px; width:140px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔎 缺测核查</h1>
+  <nav>
+    <a href="/">← 返回采集台</a>
+  </nav>
+  <span style="margin-left:auto" class="muted" id="threshold-info"></span>
+</header>
+<main>
+  <div id="build-banner"></div>
+
+  <section id="content" hidden>
+    <h2>按运单的采样缺口（相邻采样点间隔 &gt; 阈值）</h2>
+    <p class="muted" style="margin-top:-6px">
+      同一运单同一 UTC 时刻的多条原始行算作一个采样点，原始记录仍分别保留；
+      迟到日志拆分或消除缺口后，旧标记自动失效。
+    </p>
+    <table>
+      <thead><tr>
+        <th>运单号</th><th class="num">缺口数</th><th class="num">已核查</th>
+        <th>首个缺口起点 (UTC)</th><th>最后缺口终点 (UTC)</th>
+        <th class="num">最大缺口时长 (分钟)</th><th></th>
+      </tr></thead>
+      <tbody id="wb-body"></tbody>
+    </table>
+  </section>
+
+  <section id="detail" hidden>
+    <h2>运单 <code id="detail-wb"></code> 的缺口明细</h2>
+    <div class="row" style="margin-bottom:10px">
+      <label class="muted"><input type="radio" name="filter" value="all" checked> 全部</label>
+      <label class="muted"><input type="radio" name="filter" value="unmarked"> 待核查</label>
+      <label class="muted"><input type="radio" name="filter" value="marked"> 已核查</label>
+      <button class="secondary" id="btn-back">返回运单列表</button>
+    </div>
+    <table>
+      <thead><tr>
+        <th>起点 (UTC)</th><th>终点 (UTC)</th><th class="num">时长 (分钟)</th>
+        <th>状态</th><th>核查备注</th><th>操作</th>
+      </tr></thead>
+      <tbody id="gap-body"></tbody>
+    </table>
+    <h2 style="margin-top:18px">已失效标记（缺口已被迟到日志拆分或消除）</h2>
+    <table>
+      <thead><tr><th>原起点 (UTC)</th><th>原终点 (UTC)</th><th>备注</th>
+      <th>标记时间 (UTC)</th></tr></thead>
+      <tbody id="invalid-body"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentWaybill = null;
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g,
+    (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+function fmtMin(sec) { return Number(sec).toFixed(1); }
+
+async function refreshStatus() {
+  const d = await (await fetch("/api/gaps/status")).json();
+  const job = d.gap_job;
+  $("threshold-info").textContent =
+    `阈值：${d.threshold_seconds} 秒（严格大于）`;
+  const banner = $("build-banner");
+  if (job.status === "ready") {
+    banner.innerHTML = "";
+    $("content").hidden = false;
+    if (currentWaybill) { loadDetail(); } else { loadWaybills(); }
+    return true;
+  }
+  // Not ready: never request gap rows, show build progress instead.
+  $("content").hidden = true;
+  $("detail").hidden = true;
+  const pct = job.total_waybills
+    ? Math.round(100 * job.done_waybills / job.total_waybills) : 0;
+  const labels = {pending:"等待启动", running:"补建中"};
+  banner.innerHTML = `
+    <div class="banner build">
+      <strong><span class="tag building">${labels[job.status] || job.status}</span>
+      历史缺口首次补建尚未完成，期间采集照常进行，完成前不展示任何缺口结果。</strong>
+      <div class="muted" style="margin-top:6px">
+        进度：${job.done_waybills} / ${job.total_waybills} 个运单
+        ${job.current_waybill ? "· 当前：" + esc(job.current_waybill) : ""}
+        ${d.backfill.last_error ? "· 错误：" + esc(d.backfill.last_error) : ""}
+      </div>
+      <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
+    </div>`;
+  return false;
+}
+
+async function loadWaybills() {
+  const d = await (await fetch("/api/gaps/waybills")).json();
+  $("detail").hidden = true;
+  $("content").hidden = false;
+  $("wb-body").innerHTML = d.waybills.length ? d.waybills.map((w) => `
+    <tr>
+      <td class="clickable" data-wb="${esc(w.waybill)}">${esc(w.waybill)}</td>
+      <td class="num">${w.gap_count}</td>
+      <td class="num">${w.marked_count}</td>
+      <td>${esc(w.first_gap_start)}</td>
+      <td>${esc(w.last_gap_end)}</td>
+      <td class="num">${fmtMin(w.max_duration_s / 60)}</td>
+      <td><button data-wb="${esc(w.waybill)}">查看缺口</button></td>
+    </tr>`).join("") :
+    `<tr><td colspan="7" class="muted">暂无缺口：所有运单的相邻采样点均在阈值内</td></tr>`;
+  document.querySelectorAll("#wb-body [data-wb]").forEach((el) => {
+    el.onclick = () => { currentWaybill = el.dataset.wb; loadDetail(); };
+  });
+}
+
+function currentFilter() {
+  return document.querySelector('input[name=filter]:checked').value;
+}
+
+async function loadDetail() {
+  const wb = currentWaybill;
+  const d = await (await fetch(
+    "/api/gaps/waybills/" + encodeURIComponent(wb) +
+    "?marked=" + currentFilter())).json();
+  $("content").hidden = true;
+  $("detail").hidden = false;
+  $("detail-wb").textContent = wb;
+  $("gap-body").innerHTML = d.gaps.length ? d.gaps.map((g) => `
+    <tr data-start="${esc(g.start_ts)}" data-end="${esc(g.end_ts)}">
+      <td>${esc(g.start_ts)}</td>
+      <td>${esc(g.end_ts)}</td>
+      <td class="num">${fmtMin(g.duration_s / 60)}</td>
+      <td>${g.marked
+        ? '<span class="tag marked">已核查</span>'
+        : '<span class="tag open">待核查</span>'}</td>
+      <td><input class="note-input" value="${esc(g.mark_note || "")}"
+           placeholder="补取日志说明"></td>
+      <td>${g.marked
+        ? '<button class="secondary act-unmark">取消核查</button>'
+        : '<button class="act-mark">标为已核查</button>'}</td>
+    </tr>`).join("") :
+    `<tr><td colspan="6" class="muted">该筛选条件下没有缺口</td></tr>`;
+
+  $("invalid-body").innerHTML = d.invalidated_marks.length
+    ? d.invalidated_marks.map((m) => `
+      <tr><td>${esc(m.start_ts)}</td><td>${esc(m.end_ts)}</td>
+      <td>${esc(m.note || "")}</td><td class="muted">${esc(m.marked_at)}</td></tr>`)
+      .join("")
+    : `<tr><td colspan="4" class="muted">无失效标记</td></tr>`;
+
+  document.querySelectorAll("#gap-body .act-mark").forEach((btn) => {
+    btn.onclick = async () => {
+      const tr = btn.closest("tr");
+      const note = tr.querySelector(".note-input").value;
+      const r = await fetch(
+        "/api/gaps/waybills/" + encodeURIComponent(wb) + "/marks", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            start_ts: tr.dataset.start, end_ts: tr.dataset.end, note,
+          }),
+        });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert("标记失败：" + (err.hint || err.message || err.error || r.status));
+      }
+      loadDetail();
+    };
+  });
+  document.querySelectorAll("#gap-body .act-unmark").forEach((btn) => {
+    btn.onclick = async () => {
+      const tr = btn.closest("tr");
+      await fetch(
+        "/api/gaps/waybills/" + encodeURIComponent(wb) + "/marks", {
+          method: "DELETE",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            start_ts: tr.dataset.start, end_ts: tr.dataset.end,
+          }),
+        });
+      loadDetail();
+    };
+  });
+}
+
+document.querySelectorAll('input[name=filter]').forEach((el) => {
+  el.onchange = () => currentWaybill && loadDetail();
+});
+$("btn-back").onclick = () => {
+  currentWaybill = null;
+  loadWaybills();
+};
+
+async function tick() {
+  try { await refreshStatus(); }
+  catch (e) { console.error(e); }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

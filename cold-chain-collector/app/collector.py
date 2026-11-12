@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import connect
+from .gaps import JOB_READY, refresh_gaps_for_waybill
 
 READ_CHUNK = 64 * 1024
 MAX_RAW_STORED = 10_000  # truncate bad raw lines kept for diagnostics
@@ -377,6 +378,8 @@ class Collector:
                 for (row_line_no, _off, waybill, ts, temp, raw) in good
             ],
         )
+        if good:
+            self._maintain_gaps(conn, good)
         conn.executemany(
             "INSERT INTO ingest_errors (source_dev, source_ino, source_path, "
             "line_no, byte_offset, reason, raw_line) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -397,3 +400,28 @@ class Collector:
         state["pending_bytes"] = pending_bytes
         state["skipping"] = int(skipping)
         state["status"] = status
+
+    def _maintain_gaps(
+        self, conn: sqlite3.Connection, good: list[tuple]
+    ) -> None:
+        """Adjust only the gaps affected by this flush's new readings.
+
+        While the historical backfill is still running the gap tables are its
+        playground; incremental maintenance joins only after it is ready, to
+        avoid two writers fighting over the same rows.
+        """
+        job = conn.execute("SELECT status FROM gap_jobs WHERE id = 1").fetchone()
+        if job is None or job["status"] != JOB_READY:
+            return
+        windows: dict[str, tuple[str, str]] = {}
+        for (_line_no, _off, waybill, ts, _temp, _raw) in good:
+            cur = windows.get(waybill)
+            if cur is None:
+                windows[waybill] = (ts, ts)
+            else:
+                windows[waybill] = (min(cur[0], ts), max(cur[1], ts))
+        for waybill, (min_ts, max_ts) in windows.items():
+            refresh_gaps_for_waybill(
+                conn, waybill, min_ts, max_ts,
+                self.config.gap_threshold_seconds,
+            )

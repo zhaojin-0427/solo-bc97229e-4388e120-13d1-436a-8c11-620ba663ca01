@@ -30,6 +30,13 @@ class Config:
     # How many good lines/errors are flushed (with progress) per transaction.
     batch_size: int = int(os.environ.get("BATCH_SIZE", "200"))
     autostart: bool = _bool("AUTOSTART", True)
+    # Two adjacent sample points further apart than this (strictly greater)
+    # are reported as a missing-sample gap.
+    gap_threshold_seconds: float = float(
+        os.environ.get("GAP_THRESHOLD_SECONDS", "300")
+    )
+    # Build historical gaps in a background thread on first boot.
+    backfill_autostart: bool = _bool("GAP_BACKFILL_AUTOSTART", True)
     http_host: str = os.environ.get("HTTP_HOST", "0.0.0.0")
     http_port: int = int(os.environ.get("HTTP_PORT", "8000"))
 

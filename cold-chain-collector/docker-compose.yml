@@ -11,6 +11,10 @@ services:
       DB_PATH: /data/collector/collector.db
       POLL_INTERVAL: "1"
       AUTOSTART: "true"
+      # Adjacent sample points more than 300s (5 min) apart are reported as gaps.
+      GAP_THRESHOLD_SECONDS: "300"
+      # Build historical gaps in a background thread on first boot.
+      GAP_BACKFILL_AUTOSTART: "true"
       HTTP_PORT: "8000"
     volumes:
       - gateway-data:/data/gateway
@@ -32,6 +36,10 @@ services:
       ROTATE_EVERY: "20"
       HALF_LINE_EVERY: "7"
       BAD_LINE_EVERY: "11"
+      # Every OUTAGE_EVERY good lines, stay silent for OUTAGE_SECONDS so real
+      # >5-minute gaps appear on the gap-audit page (0 disables outages).
+      OUTAGE_EVERY: "45"
+      OUTAGE_SECONDS: "420"
       WAYBILLS: "4"
       SEED: "20261112"
     volumes:
